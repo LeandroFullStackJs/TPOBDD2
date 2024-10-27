@@ -17,10 +17,19 @@ sql_conn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};'
 # Conexión Neo4j
 neo4j_driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "admin123"))
 
-# Función para registrar un pedido en MongoDB y SQL Server
-def registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
-    # MongoDB
-    pedido = {
+# Función para registrar un pedido en SQL Server y MongoDB con datos diferenciados
+def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
+    # Guardar en SQL Server con todos los campos
+    cursor = sql_conn.cursor()
+    cursor.execute("""
+    INSERT INTO Pedidos (cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha)
+    VALUES (?, ?, ?, ?, ?, 'Pendiente', ?)
+    """, (cliente_id, establecimiento_id, repartidor_id, direccion_id, precio, fecha_pedido))
+    sql_conn.commit()
+    print(f"Pedido {pedido_id} registrado en SQL Server.")
+    
+    # Guardar en MongoDB con campos limitados
+    pedido_mongo = {
         "pedido_id": pedido_id,
         "cliente_id": cliente_id,
         "producto": producto,
@@ -29,16 +38,31 @@ def registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, 
         "fecha_pedido": fecha_pedido,
         "tiempo_entrega": tiempo_entrega
     }
-    mongo_pedidos.insert_one(pedido)
+    mongo_pedidos.insert_one(pedido_mongo)
+    print(f"Pedido {pedido_id} registrado en MongoDB con datos limitados.")
+
+# Función para registrar un pedido en MongoDB y SQL Server
+#def registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
+    # MongoDB
+ #   pedido = {
+  #      "pedido_id": pedido_id,
+   #     "cliente_id": cliente_id,
+    #    "producto": producto,
+     #   "precio": precio,
+      #  "ciudad": ciudad,
+       # "fecha_pedido": fecha_pedido,
+       # "tiempo_entrega": tiempo_entrega
+   # }
+   # mongo_pedidos.insert_one(pedido)
     
     # SQL Server
-    cursor = sql_conn.cursor()
-    cursor.execute("""
-    INSERT INTO Pedidos (PedidoID, ClienteID, Producto, Precio, Ciudad, FechaPedido, TiempoEntrega)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega))
-    sql_conn.commit()
-    print(f"Pedido {pedido_id} registrado en MongoDB y SQL Server.")
+   # cursor = sql_conn.cursor()
+   # cursor.execute("""
+   # INSERT INTO Pedidos (PedidoID, ClienteID, Producto, Precio, Ciudad, FechaPedido, TiempoEntrega)
+   # VALUES (?, ?, ?, ?, ?, ?, ?)
+   # """, (pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega))
+   # sql_conn.commit()
+   # print(f"Pedido {pedido_id} registrado en MongoDB y SQL Server.")
 
 # Función para registrar restaurante en Neo4j
 def registrar_restaurante_neo4j(restaurante_id, nombre_restaurante, ciudad):
@@ -141,16 +165,31 @@ def menu_principal():
         print("9. Salir")
         
         opcion = input("Seleccione una opción: ")
-
+        
         if opcion == "1":
             pedido_id = input("Ingrese ID del pedido: ")
             cliente_id = input("Ingrese ID del cliente: ")
+            establecimiento_id = input("Ingrese ID del establecimiento: ")
+            repartidor_id = input("Ingrese ID del repartidor: ")
+            direccion_id = input("Ingrese ID de la dirección: ")
             producto = input("Ingrese nombre del producto: ")
             precio = float(input("Ingrese precio del producto: "))
             ciudad = input("Ingrese ciudad: ")
-            fecha_pedido = input("Ingrese fecha del pedido: ")
+            fecha_pedido = input("Ingrese fecha del pedido (YYYY-MM-DD): ")
             tiempo_entrega = int(input("Ingrese tiempo de entrega en minutos: "))
-            registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega)
+            
+            # Llama a la función para guardar el pedido en SQL Server y MongoDB
+            registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega)
+
+     #   if opcion == "1":
+      #      pedido_id = input("Ingrese ID del pedido: ")
+       #     cliente_id = input("Ingrese ID del cliente: ")
+        #    producto = input("Ingrese nombre del producto: ")
+         #   precio = float(input("Ingrese precio del producto: "))
+          #  ciudad = input("Ingrese ciudad: ")
+           # fecha_pedido = input("Ingrese fecha del pedido: ")
+           # tiempo_entrega = int(input("Ingrese tiempo de entrega en minutos: "))
+           # registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega)
 
         elif opcion == "2":
             restaurante_id = input("Ingrese ID del restaurante: ")
