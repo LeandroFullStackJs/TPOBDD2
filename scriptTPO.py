@@ -5,14 +5,14 @@ import datetime
 
 # Conexión a MongoDB
 client_mongo = MongoClient("mongodb://localhost:27017/")
-db_mongo = client_mongo['rappi_db']
+db_mongo = client_mongo['Rappi']
 pedidos_mongo = db_mongo['pedidos']
 
 # Conexión a Neo4j
-neo4j_driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
+neo4j_driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "admin123"))
 
 # Conexión a SQL Server
-conn_sql = pyodbc.connect('DRIVER={SQL Server};SERVER=localhost;DATABASE=rappi_db;UID=sa;PWD=password')
+conn_sql = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER=localhost;DATABASE=rappi;UID=admin;PWD=admin')
 cursor_sql = conn_sql.cursor()
 
 # Función para registrar datos
