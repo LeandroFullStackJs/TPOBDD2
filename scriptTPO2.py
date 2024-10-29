@@ -25,7 +25,8 @@ def ingresar_productos():
         cantidad = int(input(f"Ingrese la cantidad de {nombre}: "))
         precio = float(input("Ingrese precio del producto: "))
         calificacion = float(input("Ingrese calificación del producto (1-5): "))
-        producto = {"nombre": nombre, "cantidad": cantidad, "precio": precio, "calificacion": calificacion}
+        categoria = input("Ingrese la categoría del producto: ")
+        producto = {"nombre": nombre, "cantidad": cantidad, "precio": precio, "categoria": categoria , "calificacion": calificacion}
         productos.append(producto)
 
         continuar = input("¿Desea agregar otro producto? (s/n): ").strip().lower()
@@ -55,27 +56,38 @@ def registrar_producto_neo4j(producto):
         print(f"Producto '{producto['nombre']}' registrado en Neo4j.")
 
  # Función para registrar un pedido con estatus y múltiples productos en SQL Server y MongoDB
-def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, 
+def registrar_pedido( cliente_id, establecimiento_id, repartidor_id, 
                      direccion_id, productos, ciudad, fecha_pedido, estado, tiempo_entrega):
     total = calcular_total_pedido(productos)
 
     # Guardar en SQL Server
     cursor = sql_conn.cursor()
     cursor.execute("""
-    INSERT INTO Pedidos (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha, tiempo_entrega)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha_pedido, tiempo_entrega))
-    sql_conn.commit()
+    INSERT INTO Pedidos ( cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha, tiempo_entrega)
+    OUTPUT INSERTED.pedido_id
+    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?)
+    """, ( cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha_pedido, tiempo_entrega))
+    #sql_conn.commit()
+
+# Recuperar el pedido_id recién insertado
+
+   # cursor.execute("SELECT SCOPE_IDENTITY()")
+    pedido_id = cursor.fetchone()[0]  # Obtén el pedido_id generado
 
     # Guardar detalles de productos
     for producto in productos:
+        subtotal = producto["cantidad"] * producto["precio"]  # Calcular subtotal
         cursor.execute("""
-        INSERT INTO DetallePedido (pedido_id, nombre_producto, cantidad, precio_unitario)
+        INSERT INTO DetallesPedido (pedido_id, nombre_producto, cantidad, subtotal)
         VALUES (?, ?, ?, ?)
-        """, (pedido_id, producto["nombre"], producto["cantidad"], producto["precio"]))
+        """, (pedido_id, producto["nombre"], producto["cantidad"],subtotal))
+        
     sql_conn.commit()
 
     print(f"Pedido {pedido_id} registrado en SQL Server con estado '{estado}'.")
+
+    # Guardar en Neo4j el pedido
+    registrar_pedido_neo4j(pedido_id, establecimiento_id, cliente_id, productos, fecha_pedido, estado)
 
     # Guardar cada producto en Neo4j
     for producto in productos:
@@ -95,55 +107,45 @@ def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id,
     mongo_pedidos.insert_one(pedido_mongo)
     print(f"Pedido {pedido_id} registrado en MongoDB.")
 
-# Función para registrar un pedido en SQL Server y MongoDB con datos diferenciados
-# def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
-    
-    # Guardar en SQL Server con todos los campos
-  #  cursor = sql_conn.cursor()
-   # cursor.execute("""
-   # INSERT INTO Pedidos (cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha)
-  #  VALUES (?, ?, ?, ?, ?, 'Pendiente', ?)
-  #  """, (cliente_id, establecimiento_id, repartidor_id, direccion_id, precio, fecha_pedido))
-   # sql_conn.commit()
-   # print(f"Pedido {pedido_id} registrado en SQL Server.")
-    
-    # Guardar en MongoDB con campos limitados
-   # pedido_mongo = {
-      #  "pedido_id": pedido_id,
-      #  "cliente_id": cliente_id,
-     #   "producto": producto,  # Guardar la lista completa de productos
-     #   "precio": precio,
-     #   "ciudad": ciudad,
-     #   "fecha_pedido": fecha_pedido,
-     #   "tiempo_entrega": tiempo_entrega
-    # }
-    # mongo_pedidos.insert_one(pedido_mongo)
-    # print(f"Pedido {pedido_id} registrado en MongoDB con múltiples productos.")
-
-
-
-# Función para registrar un pedido en MongoDB y SQL Server
-#def registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
-    # MongoDB
- #   pedido = {
-  #      "pedido_id": pedido_id,
-   #     "cliente_id": cliente_id,
-    #    "producto": producto,
-     #   "precio": precio,
-      #  "ciudad": ciudad,
-       # "fecha_pedido": fecha_pedido,
-       # "tiempo_entrega": tiempo_entrega
-   # }
-   # mongo_pedidos.insert_one(pedido)
-    
-    # SQL Server
-   # cursor = sql_conn.cursor()
-   # cursor.execute("""
-   # INSERT INTO Pedidos (PedidoID, ClienteID, Producto, Precio, Ciudad, FechaPedido, TiempoEntrega)
-   # VALUES (?, ?, ?, ?, ?, ?, ?)
-   # """, (pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega))
-   # sql_conn.commit()
-   # print(f"Pedido {pedido_id} registrado en MongoDB y SQL Server.")
+# Función para registrar pedido en Neo4j
+def registrar_pedido_neo4j(pedido_id, restaurante_id, cliente_id, productos, fecha_pedido, estado):
+    with neo4j_driver.session() as session:
+       
+        # crear o merge Pedido nodos y establecer las relaciones con el restaurante y el cliente
+        query = """
+        MERGE (p:Pedido {pedido_id: $pedido_id})
+        SET p.fecha_pedido = $fecha_pedido, p.estado = $estado
+        """
+        session.run(query, pedido_id=pedido_id, fecha_pedido=fecha_pedido, estado=estado)
+        
+        
+        # crear o merge Restaurante nodos y establecer las relaciones con el pedido
+        query = """
+        MATCH (p:Pedido {pedido_id: $pedido_id})
+        MERGE (r:Restaurante {restaurante_id: $restaurante_id})
+        MERGE (p)-[:REALIZADO_EN]->(r)
+        """
+        session.run(query, pedido_id=pedido_id, restaurante_id=restaurante_id)
+        
+        
+        # crear o merge Cliente nodos y establecer las relaciones con el pedido
+        query = """
+        MATCH (p:Pedido {pedido_id: $pedido_id})
+        MERGE (c:Cliente {cliente_id: $cliente_id})
+        MERGE (p)-[:REALIZADO_POR]->(c)
+        """
+        session.run(query, pedido_id=pedido_id, cliente_id=cliente_id)
+        
+        # crear o merge Producto nodos y establecer las relaciones con el pedido
+        for producto in productos:
+            query = """
+            MATCH (p:Pedido {pedido_id: $pedido_id})
+            MERGE (prod:Producto {nombre: $nombre_producto})
+            MERGE (p)-[:INCLUYE]->(prod)
+            """
+            session.run(query, pedido_id=pedido_id, nombre_producto=producto["nombre"])
+        
+        print(f"Pedido {pedido_id} registrado en Neo4j y relacionado con el restaurante {restaurante_id}.")
 
 # Función para registrar restaurante en Neo4j
 def registrar_restaurante_neo4j(restaurante_id, nombre_restaurante, ciudad):
@@ -156,15 +158,17 @@ def registrar_restaurante_neo4j(restaurante_id, nombre_restaurante, ciudad):
         print(f"Restaurante {nombre_restaurante} registrado en Neo4j.")
 
 # Función para registrar entrega en Neo4j
-def registrar_entrega_neo4j(pedido_id, estado_entrega, tiempo_entrega):
-    with neo4j_driver.session() as session:
-        query = """
-        MATCH (p:Pedido {pedido_id: $pedido_id})
-        SET p.estado = $estado_entrega, p.tiempo_entrega = $tiempo_entrega
-        RETURN p
-        """
-        session.run(query, pedido_id=pedido_id, estado_entrega=estado_entrega, tiempo_entrega=tiempo_entrega)
-        print(f"Entrega de pedido {pedido_id} registrada en Neo4j con estado '{estado_entrega}'.") 
+# esto lo va a hacer el metodo registrar_pedido_neo4j
+
+#def registrar_entrega_neo4j(pedido_id, estado_entrega, tiempo_entrega):
+ #   with neo4j_driver.session() as session:
+  #      query = """
+   #     MATCH (p:Pedido {pedido_id: $pedido_id})
+    #    SET p.estado = $estado_entrega, p.tiempo_entrega = $tiempo_entrega
+     #   RETURN p
+      #  """
+      #  session.run(query, pedido_id=pedido_id, estado_entrega=estado_entrega, tiempo_entrega=tiempo_entrega)
+       # print(f"Entrega de pedido {pedido_id} registrada en Neo4j con estado '{estado_entrega}'.") 
 
 # Funciones para las consultas
 
@@ -176,10 +180,12 @@ def pedidos_diarios_por_ciudad_mongo():
     for r in result:
         print(f"Ciudad: {r['_id']}, Total Pedidos: {r['totalPedidos']}")
 
+
 # 2. Productos más solicitados (MongoDB)
 def productos_mas_solicitados_mongo():
     result = mongo_pedidos.aggregate([
-        {"$group": {"_id": "$producto", "totalPedidos": {"$sum": 1}}},
+        {"$unwind": "$productos"},
+        {"$group": {"_id": "$productos.nombre", "totalPedidos": {"$sum": "$productos.cantidad"}}},
         {"$sort": {"totalPedidos": -1}},
         {"$limit": 10}
     ])
@@ -190,7 +196,7 @@ def productos_mas_solicitados_mongo():
 def restaurantes_populares_neo4j():
     with neo4j_driver.session() as session:
         query = """
-        MATCH (r:Restaurante)<-[:REALIZA_PEDIDO_EN]-(p:Pedido)
+        MATCH (r:Restaurante)<-[:REALIZADO_EN]-(p:Pedido)
         RETURN r.nombre AS restaurante, COUNT(p) AS totalPedidos
         ORDER BY totalPedidos DESC LIMIT 10
         """
@@ -200,50 +206,54 @@ def restaurantes_populares_neo4j():
 
 # 4. Categorías populares fin de semana (Neo4j)
 def categorias_populares_fin_semana_neo4j():
-   with neo4j_driver.session() as session:
+    with neo4j_driver.session() as session:
         query = """
-        MATCH (p:Producto)-[:PERTENECE_A]->(c:Categoria)
-        WHERE date().dayOfWeek IN [6, 7]  // 6 = Sábado, 7 = Domingo
-        RETURN c.nombre AS categoria, COUNT(p) AS total_productos
+        MATCH (p:Pedido)-[:INCLUYE]->(prod:Producto)-[:PERTENECE_A]->(c:Categoria)
+        WHERE p.fecha_pedido IS NOT NULL AND (datetime(p.fecha_pedido).dayOfWeek IN [6, 7])
+        RETURN c.nombre AS categoria, COUNT(prod) AS total_productos
         ORDER BY total_productos DESC
         LIMIT 5
         """
         result = session.run(query)
         for record in result:
-            print(f"Categoría: {record['categoria']}, Total Pedidos: {record['totalPedidos']}")
-
-# 4. Categorías populares fin de semana (Neo4j)
-#def categorias_populares_fin_semana_neo4j():
- #   with neo4j_driver.session() as session:
-  #      query = """
-   #     MATCH (p:Producto)-[:PERTENECE_A]->(c:Categoria)
-    #    WHERE p.fecha_pedido IN ['Sábado', 'Domingo']
-     #   RETURN c.nombre AS categoria, COUNT(p) AS totalPedidos
-      #  ORDER BY totalPedidos DESC LIMIT 10
-      #  """
-      #  result = session.run(query)
-       # for record in result:
-        #    print(f"Categoría: {record['categoria']}, Total Pedidos: {record['totalPedidos']}")
+            print(f"Categoría: {record['categoria']}, Total Productos: {record['total_productos']}")
 
 # 5. Pedidos mayores a $50 entregados en menos de 30 minutos (SQL Server)
 def pedidos_mayores_50_rapidos_sql():
     cursor = sql_conn.cursor()
     cursor.execute("""
-    SELECT PedidoID, Producto, Precio, TiempoEntrega
+    SELECT COUNT(*) AS TotalPedidos
     FROM Pedidos
-    WHERE Precio > 50 AND TiempoEntrega < 30
+    WHERE total > 50 AND tiempo_entrega < 30 AND estado = 'Entregado'
     """)
-    for row in cursor:
-        print(f"PedidoID: {row.PedidoID}, Producto: {row.Producto}, Precio: {row.Precio}, TiempoEntrega: {row.TiempoEntrega}")
+    row = cursor.fetchone()
+    print(f"Total Pedidos mayores a $50 y entregados en menos de 30 minutos: {row.TotalPedidos}")
 
 # 6. Productos solicitados más de 100 veces o con calificación promedio mayor a 4.5 (MongoDB)
-def productos_populares_mongo():
-    result = mongo_pedidos.aggregate([
-        {"$group": {"_id": "$producto", "totalPedidos": {"$sum": 1}, "calificacionPromedio": {"$avg": "$calificacion"}}},
-        {"$match": {"$or": [{"totalPedidos": {"$gt": 100}}, {"calificacionPromedio": {"$gt": 4.5}}]}}
-    ])
-    for r in result:
-        print(f"Producto: {r['_id']}, Total Pedidos: {r['totalPedidos']}, Calificación Promedio: {r['calificacionPromedio']}")
+def productos_populares_o_bien_calificados():
+    pipeline = [
+        {"$unwind": "$productos"},
+        {"$group": {
+            "_id": "$productos.nombre",
+            "totalCantidad": {"$sum": "$productos.cantidad"},
+            "promedioCalificacion": {"$avg": "$productos.calificacion"}
+        }},
+        {"$match": {
+            "$or": [
+                {"totalCantidad": {"$gt": 100}},
+                {"promedioCalificacion": {"$gt": 4.5}}
+            ]
+        }},
+        {"$project": {
+            "nombre": "$_id",
+            "totalCantidad": 1,
+            "promedioCalificacion": 1
+        }}
+    ]
+
+    result = mongo_pedidos.aggregate(pipeline)
+    for doc in result:
+        print(f"Producto: {doc['nombre']}, Total Cantidad: {doc['totalCantidad']}, Promedio Calificación: {doc['promedioCalificacion']}")
 
 # Menú principal
 def menu_principal():
@@ -256,13 +266,13 @@ def menu_principal():
         print("5. Consultar Restaurantes más Populares (Neo4j)")
         print("6. Consultar Categorías Populares Fin de Semana (Neo4j)")
         print("7. Consultar Pedidos > $50 y Entrega en < 30 min (SQL Server)")
-        print("8. Consultar Productos Populares (MongoDB)")
+        print("8. Consultar Productos Populares o bien calificados (promedio superior a 4.5)(MongoDB)")
         print("9. Salir")
         
         opcion = input("Seleccione una opción: ")
         
         if opcion == "1":
-            pedido_id = input("Ingrese ID del pedido: ")
+            # pedido_id = input("Ingrese ID del pedido: ") -- Uso un auto incremento en SQL Server
             cliente_id = input("Ingrese ID del cliente: ")
             establecimiento_id = input("Ingrese ID del establecimiento: ")
             repartidor_id = input("Ingrese ID del repartidor: ")
@@ -276,17 +286,9 @@ def menu_principal():
             productos = ingresar_productos()
 
             # Llama a la función para guardar el pedido en SQL Server y MongoDB
-            registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, productos, ciudad, fecha_pedido, estado , tiempo_entrega)
+            registrar_pedido( cliente_id, establecimiento_id, repartidor_id, direccion_id, productos, ciudad, fecha_pedido, estado , tiempo_entrega)
 
-     #   if opcion == "1":
-      #      pedido_id = input("Ingrese ID del pedido: ")
-       #     cliente_id = input("Ingrese ID del cliente: ")
-        #    producto = input("Ingrese nombre del producto: ")
-         #   precio = float(input("Ingrese precio del producto: "))
-          #  ciudad = input("Ingrese ciudad: ")
-           # fecha_pedido = input("Ingrese fecha del pedido: ")
-           # tiempo_entrega = int(input("Ingrese tiempo de entrega en minutos: "))
-           # registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega)
+     
 
         elif opcion == "2":
             restaurante_id = input("Ingrese ID del restaurante: ")
@@ -310,7 +312,7 @@ def menu_principal():
             pedidos_mayores_50_rapidos_sql()
 
         elif opcion == "8":
-            productos_populares_mongo()
+            productos_populares_o_bien_calificados()
 
         elif opcion == "9":
             print("Saliendo del programa.")
@@ -322,77 +324,4 @@ def menu_principal():
 if __name__ == "__main__":
     menu_principal()
 
-# Otras formas de las consultas 
-
-# Funciones para las consultas
-
-# 1. ¿Cuántos pedidos se realizan diariamente en diferentes ciudades? (MongoDB)
-# def pedidos_diarios_por_ciudad():
-  #  db = conectar_mongodb()
-   # pipeline = [
-    #    {"$group": {"_id": "$ciudad", "totalPedidos": {"$sum": 1}}},
-     #   {"$sort": {"totalPedidos": -1}}
-   # ]
-   # resultados = db.pedidos.aggregate(pipeline)
-   # for resultado in resultados:
-   #     print(f"Ciudad: {resultado['_id']}, Pedidos diarios: {resultado['totalPedidos']}")
-
-# 2. ¿Cuáles son los restaurantes más populares entre los clientes? (Neo4j)
-# def restaurantes_populares_neo4j(driver):
-  #  query = """
-   # MATCH (r:Restaurante)
-   # RETURN r.nombre AS nombre, r.calificacion AS calificacion
-   # ORDER BY r.calificacion DESC LIMIT 10
-   # """
-   # with driver.session() as session:
-   #     resultados = session.run(query)
-   #     for record in resultados:
-   #         print(f"Restaurante: {record['nombre']}, Calificación: {record['calificacion']}")
-
-# 3. ¿Cuántos pedidos han superado los $50 Y han sido entregados en menos de 30 minutos? (SQL Server)
-# def pedidos_rapidos_y_costosos_sqlserver():
-  #  conn = conectar_sqlserver()
-   # cursor = conn.cursor()
-   # cursor.execute(
-   #     "SELECT COUNT(*) FROM Pedidos WHERE Monto > 50 AND TiempoEntrega < 30"
-   # )
-   # resultado = cursor.fetchone()
-   # print(f"Número de pedidos que superaron $50 y fueron entregados en menos de 30 minutos: {resultado[0]}")
-
-# 4. ¿Qué tipos de productos son más solicitados por los usuarios? (MongoDB)
-# def productos_mas_solicitados_mongodb():
-  #  db = conectar_mongodb()
-  #  pipeline = [
-   #     {"$unwind": "$productos"},
-    #    {"$group": {"_id": "$productos.nombre", "totalPedidos": {"$sum": 1}}},
-     #   {"$sort": {"totalPedidos": -1}}
-#    ]
- #   resultados = db.pedidos.aggregate(pipeline)
-  #  for resultado in resultados:
-   #     print(f"Producto: {resultado['_id']}, Total pedidos: {resultado['totalPedidos']}")
-
-# 5. ¿Qué categorías de productos tienen mayor demanda durante los fines de semana? (Neo4j)
-# def categorias_populares_fin_semana_neo4j(driver):
- #   query = """
-  #  MATCH (p:Producto)-[:PERTENECE_A]->(c:Categoria)
-  #  WHERE p.fecha_pedido IN ['Sábado', 'Domingo']
-  #  RETURN c.nombre AS categoria, COUNT(p) AS totalPedidos
-  #  ORDER BY totalPedidos DESC LIMIT 10
-  #  """
-  #  with driver.session() as session:
-   #     resultados = session.run(query)
-    #    for record in resultados:
-     #       print(f"Categoría: {record['categoria']}, Pedidos: {record['totalPedidos']}")
-
-# 6. ¿Qué productos son solicitados más de 100 veces o tienen una calificación promedio superior a 4.5? (MongoDB)
-# def productos_populares_mongodb():
- #   db = conectar_mongodb()
-  #  pipeline = [
-   #     {"$unwind": "$productos"},
-    #    {"$group": {"_id": "$productos.nombre", "totalPedidos": {"$sum": 1}, "calificacionPromedio": {"$avg": "$productos.calificacion"}}},
-     #   {"$match": {"$or": [{"totalPedidos": {"$gt": 100}}, {"calificacionPromedio": {"$gt": 4.5}}]}},
-      #  {"$sort": {"totalPedidos": -1}}
-   # ]
-   # resultados = db.pedidos.aggregate(pipeline)
-   # for resultado in resultados:
-   #     print(f"Producto: {resultado['_id']}, Total pedidos: {resultado['totalPedidos']}, Calificación promedio: {resultado['calificacionPromedio']}") 
+ 
