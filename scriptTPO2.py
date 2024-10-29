@@ -4,7 +4,7 @@ from neo4j import GraphDatabase
 
 # Conexión MongoDB
 mongo_client = MongoClient("mongodb://localhost:27017/")
-mongo_db = mongo_client["Rappi"]
+mongo_db = mongo_client["rappi"]
 mongo_pedidos = mongo_db["pedidos"]
 
 # Conexión SQL Server
@@ -22,9 +22,10 @@ def ingresar_productos():
     productos = []
     while True:
         nombre = input("Ingrese nombre del producto: ")
+        cantidad = int(input(f"Ingrese la cantidad de {nombre}: "))
         precio = float(input("Ingrese precio del producto: "))
         calificacion = float(input("Ingrese calificación del producto (1-5): "))
-        producto = {"nombre": nombre, "precio": precio, "calificacion": calificacion}
+        producto = {"nombre": nombre, "cantidad": cantidad, "precio": precio, "calificacion": calificacion}
         productos.append(producto)
 
         continuar = input("¿Desea agregar otro producto? (s/n): ").strip().lower()
@@ -54,27 +55,30 @@ def registrar_producto_neo4j(producto):
         print(f"Producto '{producto['nombre']}' registrado en Neo4j.")
 
  # Función para registrar un pedido con estatus y múltiples productos en SQL Server y MongoDB
-def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, productos, ciudad, fecha_pedido, estado , tiempo_entrega):
+def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, 
+                     direccion_id, productos, ciudad, fecha_pedido, estado, tiempo_entrega):
     total = calcular_total_pedido(productos)
 
     # Guardar en SQL Server
     cursor = sql_conn.cursor()
     cursor.execute("""
-    INSERT INTO Pedidos (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha , tiempo_entrega)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ? , ?)
-    """, (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha_pedido , tiempo_entrega ))
+    INSERT INTO Pedidos (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha, tiempo_entrega)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha_pedido, tiempo_entrega))
     sql_conn.commit()
 
-    # Guardar detalles de productos en tabla DetallePedido en SQL Server
+    # Guardar detalles de productos
     for producto in productos:
         cursor.execute("""
         INSERT INTO DetallePedido (pedido_id, nombre_producto, cantidad, precio_unitario)
         VALUES (?, ?, ?, ?)
         """, (pedido_id, producto["nombre"], producto["cantidad"], producto["precio"]))
-        sql_conn.commit()
-        print(f"Pedido {pedido_id} registrado en SQL Server con estado '{estado}'.")
+    sql_conn.commit()
 
-        # Guardar el producto en Neo4j junto con su categoría
+    print(f"Pedido {pedido_id} registrado en SQL Server con estado '{estado}'.")
+
+    # Guardar cada producto en Neo4j
+    for producto in productos:
         registrar_producto_neo4j(producto)
 
     # Guardar en MongoDB
@@ -85,7 +89,7 @@ def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, d
         "total": total,
         "ciudad": ciudad,
         "fecha_pedido": fecha_pedido,
-        "estado": estado ,
+        "estado": estado,
         "tiempo_entrega": tiempo_entrega
     }
     mongo_pedidos.insert_one(pedido_mongo)
@@ -263,8 +267,6 @@ def menu_principal():
             establecimiento_id = input("Ingrese ID del establecimiento: ")
             repartidor_id = input("Ingrese ID del repartidor: ")
             direccion_id = input("Ingrese ID de la dirección: ")
-            producto = input("Ingrese nombre del producto: ")
-            precio = float(input("Ingrese precio del producto: "))
             ciudad = input("Ingrese ciudad: ")
             estado = input("Ingrese el estado del pedido (Pendiente, En preparación, En camino, Entregado): ")
             fecha_pedido = input("Ingrese fecha del pedido (YYYY-MM-DD): ")
@@ -274,7 +276,7 @@ def menu_principal():
             productos = ingresar_productos()
 
             # Llama a la función para guardar el pedido en SQL Server y MongoDB
-            registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega)
+            registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, productos, ciudad, fecha_pedido, estado , tiempo_entrega)
 
      #   if opcion == "1":
       #      pedido_id = input("Ingrese ID del pedido: ")
