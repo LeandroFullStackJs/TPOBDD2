@@ -17,29 +17,106 @@ sql_conn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};'
 # Conexión Neo4j
 neo4j_driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "admin123"))
 
-# Función para registrar un pedido en SQL Server y MongoDB con datos diferenciados
-def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
-    # Guardar en SQL Server con todos los campos
+# Función para ingresar múltiples productos por teclado
+def ingresar_productos():
+    productos = []
+    while True:
+        nombre = input("Ingrese nombre del producto: ")
+        precio = float(input("Ingrese precio del producto: "))
+        calificacion = float(input("Ingrese calificación del producto (1-5): "))
+        producto = {"nombre": nombre, "precio": precio, "calificacion": calificacion}
+        productos.append(producto)
+
+        continuar = input("¿Desea agregar otro producto? (s/n): ").strip().lower()
+        if continuar != 's':
+            break
+    return productos
+
+# Función para calcular el total del pedido
+def calcular_total_pedido(productos):
+    total = sum(p["cantidad"] * p["precio"] for p in productos)
+    return total
+
+# Función para registrar productos y categorías en Neo4j
+def registrar_producto_neo4j(producto):
+    with neo4j_driver.session() as session:
+        query = """
+        MERGE (p:Producto {nombre: $nombre})
+        SET p.precio = $precio, p.calificacion = $calificacion
+        MERGE (c:Categoria {nombre: $categoria})
+        MERGE (p)-[:PERTENECE_A]->(c)
+        """
+        session.run(query, 
+                    nombre=producto["nombre"], 
+                    precio=producto["precio"], 
+                    calificacion=producto["calificacion"], 
+                    categoria=producto["categoria"])
+        print(f"Producto '{producto['nombre']}' registrado en Neo4j.")
+
+ # Función para registrar un pedido con estatus y múltiples productos en SQL Server y MongoDB
+def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, productos, ciudad, fecha_pedido, estado , tiempo_entrega):
+    total = calcular_total_pedido(productos)
+
+    # Guardar en SQL Server
     cursor = sql_conn.cursor()
     cursor.execute("""
-    INSERT INTO Pedidos (cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha)
-    VALUES (?, ?, ?, ?, ?, 'Pendiente', ?)
-    """, (cliente_id, establecimiento_id, repartidor_id, direccion_id, precio, fecha_pedido))
+    INSERT INTO Pedidos (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha , tiempo_entrega)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ? , ?)
+    """, (pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha_pedido , tiempo_entrega ))
     sql_conn.commit()
-    print(f"Pedido {pedido_id} registrado en SQL Server.")
-    
-    # Guardar en MongoDB con campos limitados
+
+    # Guardar detalles de productos en tabla DetallePedido en SQL Server
+    for producto in productos:
+        cursor.execute("""
+        INSERT INTO DetallePedido (pedido_id, nombre_producto, cantidad, precio_unitario)
+        VALUES (?, ?, ?, ?)
+        """, (pedido_id, producto["nombre"], producto["cantidad"], producto["precio"]))
+        sql_conn.commit()
+        print(f"Pedido {pedido_id} registrado en SQL Server con estado '{estado}'.")
+
+        # Guardar el producto en Neo4j junto con su categoría
+        registrar_producto_neo4j(producto)
+
+    # Guardar en MongoDB
     pedido_mongo = {
         "pedido_id": pedido_id,
         "cliente_id": cliente_id,
-        "producto": producto,
-        "precio": precio,
+        "productos": productos,
+        "total": total,
         "ciudad": ciudad,
         "fecha_pedido": fecha_pedido,
+        "estado": estado ,
         "tiempo_entrega": tiempo_entrega
     }
     mongo_pedidos.insert_one(pedido_mongo)
-    print(f"Pedido {pedido_id} registrado en MongoDB con datos limitados.")
+    print(f"Pedido {pedido_id} registrado en MongoDB.")
+
+# Función para registrar un pedido en SQL Server y MongoDB con datos diferenciados
+# def registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
+    
+    # Guardar en SQL Server con todos los campos
+  #  cursor = sql_conn.cursor()
+   # cursor.execute("""
+   # INSERT INTO Pedidos (cliente_id, establecimiento_id, repartidor_id, direccion_id, total, estado, fecha)
+  #  VALUES (?, ?, ?, ?, ?, 'Pendiente', ?)
+  #  """, (cliente_id, establecimiento_id, repartidor_id, direccion_id, precio, fecha_pedido))
+   # sql_conn.commit()
+   # print(f"Pedido {pedido_id} registrado en SQL Server.")
+    
+    # Guardar en MongoDB con campos limitados
+   # pedido_mongo = {
+      #  "pedido_id": pedido_id,
+      #  "cliente_id": cliente_id,
+     #   "producto": producto,  # Guardar la lista completa de productos
+     #   "precio": precio,
+     #   "ciudad": ciudad,
+     #   "fecha_pedido": fecha_pedido,
+     #   "tiempo_entrega": tiempo_entrega
+    # }
+    # mongo_pedidos.insert_one(pedido_mongo)
+    # print(f"Pedido {pedido_id} registrado en MongoDB con múltiples productos.")
+
+
 
 # Función para registrar un pedido en MongoDB y SQL Server
 #def registrar_pedido_mongo_sql(pedido_id, cliente_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega):
@@ -83,7 +160,7 @@ def registrar_entrega_neo4j(pedido_id, estado_entrega, tiempo_entrega):
         RETURN p
         """
         session.run(query, pedido_id=pedido_id, estado_entrega=estado_entrega, tiempo_entrega=tiempo_entrega)
-        print(f"Entrega de pedido {pedido_id} registrada en Neo4j con estado '{estado_entrega}'.")
+        print(f"Entrega de pedido {pedido_id} registrada en Neo4j con estado '{estado_entrega}'.") 
 
 # Funciones para las consultas
 
@@ -119,16 +196,30 @@ def restaurantes_populares_neo4j():
 
 # 4. Categorías populares fin de semana (Neo4j)
 def categorias_populares_fin_semana_neo4j():
-    with neo4j_driver.session() as session:
+   with neo4j_driver.session() as session:
         query = """
         MATCH (p:Producto)-[:PERTENECE_A]->(c:Categoria)
-        WHERE p.fecha_pedido IN ['Sábado', 'Domingo']
-        RETURN c.nombre AS categoria, COUNT(p) AS totalPedidos
-        ORDER BY totalPedidos DESC LIMIT 10
+        WHERE date().dayOfWeek IN [6, 7]  // 6 = Sábado, 7 = Domingo
+        RETURN c.nombre AS categoria, COUNT(p) AS total_productos
+        ORDER BY total_productos DESC
+        LIMIT 5
         """
         result = session.run(query)
         for record in result:
             print(f"Categoría: {record['categoria']}, Total Pedidos: {record['totalPedidos']}")
+
+# 4. Categorías populares fin de semana (Neo4j)
+#def categorias_populares_fin_semana_neo4j():
+ #   with neo4j_driver.session() as session:
+  #      query = """
+   #     MATCH (p:Producto)-[:PERTENECE_A]->(c:Categoria)
+    #    WHERE p.fecha_pedido IN ['Sábado', 'Domingo']
+     #   RETURN c.nombre AS categoria, COUNT(p) AS totalPedidos
+      #  ORDER BY totalPedidos DESC LIMIT 10
+      #  """
+      #  result = session.run(query)
+       # for record in result:
+        #    print(f"Categoría: {record['categoria']}, Total Pedidos: {record['totalPedidos']}")
 
 # 5. Pedidos mayores a $50 entregados en menos de 30 minutos (SQL Server)
 def pedidos_mayores_50_rapidos_sql():
@@ -175,9 +266,13 @@ def menu_principal():
             producto = input("Ingrese nombre del producto: ")
             precio = float(input("Ingrese precio del producto: "))
             ciudad = input("Ingrese ciudad: ")
+            estado = input("Ingrese el estado del pedido (Pendiente, En preparación, En camino, Entregado): ")
             fecha_pedido = input("Ingrese fecha del pedido (YYYY-MM-DD): ")
             tiempo_entrega = int(input("Ingrese tiempo de entrega en minutos: "))
             
+            # Ingresar múltiples productos
+            productos = ingresar_productos()
+
             # Llama a la función para guardar el pedido en SQL Server y MongoDB
             registrar_pedido(pedido_id, cliente_id, establecimiento_id, repartidor_id, direccion_id, producto, precio, ciudad, fecha_pedido, tiempo_entrega)
 
